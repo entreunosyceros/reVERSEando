@@ -1,0 +1,34 @@
+# Configuración sensible (API keys)
+config/gemini.json
+config/*.local.json
+.env
+.env.*
+!.env.example
+
+# Specs y notas de diseño locales
+docs/
+docs/superpowers/
+docs/superpowers/specs/
+
+# Depuración / Cursor
+.cursor/
+*.log
+debug-*.log
+
+# Capturas temporales de Chromium
+tmp/
+temp/
+*.tmp
+
+# Dependencias (por si se añaden más adelante)
+vendor/
+node_modules/
+
+# Sistema / IDE
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+*.code-workspace
