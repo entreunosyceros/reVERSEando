@@ -1,5 +1,11 @@
 # reVERSEand0
 
+<p align="center">
+
+<img width="1536" height="1024" alt="reVERSEand0_ Convierte webs en prompts" src="https://github.com/user-attachments/assets/85d4527f-1194-4b0c-b41c-647133bd44da" />
+
+</p>
+
 Genera un **prompt de desarrollo** en español a partir de:
 
 - un **repositorio público de GitHub**, o
@@ -12,6 +18,11 @@ Si configuras una API key de **Gemini**, el prompt lo genera el modelo (en modo 
 **Repositorio:** [github.com/entreunosyceros/reVERSEando](https://github.com/entreunosyceros/reVERSEando)
 
 ## Características
+
+<p align="center">
+
+<img width="860" height="1397" alt="reverseando-repo" src="https://github.com/user-attachments/assets/6543459b-f47b-4cff-afeb-3aa257469761" />
+</p>
 
 - Modo **Repositorio**: metadatos públicos de GitHub (sin clonado ni OAuth)
 - Modo **Página web**: HTML/CSS (+ captura local con Chrome/Chromium si hay Gemini)
@@ -64,6 +75,12 @@ cp config/gemini.json.example config/gemini.json
 Asegúrate de que el proceso de PHP pueda escribir en `config/`. El archivo `config/gemini.json` está en `.gitignore` y **no debe subirse** al repositorio.
 
 ## Uso
+
+<p align="center">
+
+<img width="838" height="1322" alt="reverseando-web" src="https://github.com/user-attachments/assets/b2422c17-b412-43dd-b9bc-10dd25cbfe6c" />
+
+</p>
 
 1. Elige **Repositorio** o **Página web** (al cambiar de modo se limpia el prompt anterior).
 2. Pega una URL (o un ejemplo). En repositorio también vale `propietario/repositorio`.
