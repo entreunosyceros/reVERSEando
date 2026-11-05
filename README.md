@@ -2,7 +2,7 @@
 
 <p align="center">
 
-<img width="1536" height="1024" alt="reVERSEand0_ Convierte webs en prompts" src="https://github.com/user-attachments/assets/85d4527f-1194-4b0c-b41c-647133bd44da" />
+![Logo reVERSEand0](img/logo.png)
 
 </p>
 
@@ -13,9 +13,6 @@ Genera un **prompt de desarrollo** en español a partir de:
 
 Si configuras una API key de **Gemini**, el prompt lo genera el modelo (en modo web, con captura de pantalla); si no, o si Gemini está saturado, se usa una **plantilla PHP** local.
 
-![Logo reVERSEand0](img/logo.png)
-
-**Repositorio:** [github.com/entreunosyceros/reVERSEando](https://github.com/entreunosyceros/reVERSEando)
 
 ## Características
 
