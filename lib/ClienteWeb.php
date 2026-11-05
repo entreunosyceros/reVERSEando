@@ -1,6 +1,6 @@
 <?php
 /**
- * Cliente para obtener y resumir el HTML/CSS público de una página web.
+ * Cliente para obtener y resumir el HTML/CSS público de una página web (anti-SSRF).
  */
 class ClienteWeb
 {
@@ -8,14 +8,17 @@ class ClienteWeb
     private int $maxCss = 3;
     private int $maxBytesCss = 100000;
     private int $maxBytesHtml = 800000;
+    private int $maxRedirecciones = 3;
     private ResolutorDns $resolutor;
+    private AnalizadorUrl $analizador;
 
     /** @var array<string, string> */
     private array $cacheDns = [];
 
-    public function __construct(?ResolutorDns $resolutor = null)
+    public function __construct(?ResolutorDns $resolutor = null, ?AnalizadorUrl $analizador = null)
     {
         $this->resolutor = $resolutor ?? new ResolutorDns();
+        $this->analizador = $analizador ?? new AnalizadorUrl();
     }
 
     public function obtenerResolutor(): ResolutorDns
@@ -32,14 +35,24 @@ class ClienteWeb
      *   clasesFrecuentes: list<string>,
      *   textoVisible: string,
      *   resumenCss: string,
-     *   hojasCss: list<string>
+     *   hojasCss: list<string>,
+     *   diagnostico: array{
+     *     htmlOk: bool,
+     *     cssEnlazadas: int,
+     *     cssObtenidas: int,
+     *     cssFallidas: list<string>,
+     *     dinamico: bool,
+     *     dinamicoDetalle: string
+     *   }
      * }
      */
     public function analizarPagina(string $url): array
     {
-        $html = $this->obtenerTexto($url);
+        $html = $this->obtenerTexto($url, 'html');
+        $htmlRecortado = false;
         if (strlen($html) > $this->maxBytesHtml) {
             $html = substr($html, 0, $this->maxBytesHtml);
+            $htmlRecortado = true;
         }
 
         $titulo = $this->extraerTitulo($html);
@@ -52,8 +65,10 @@ class ClienteWeb
 
         $descargas = $this->obtenerTextos($urlsCss);
         $contenidosCss = [];
+        $cssFallidas = [];
         foreach ($urlsCss as $urlCss) {
             if (!isset($descargas[$urlCss])) {
+                $cssFallidas[] = $urlCss;
                 continue;
             }
             $css = $descargas[$urlCss];
@@ -65,6 +80,7 @@ class ClienteWeb
 
         $cssCombinado = implode("\n\n", $contenidosCss);
         $resumenCss = $this->resumirCss($cssCombinado);
+        $dinamico = $this->detectarContenidoDinamico($html, $textoVisible);
 
         return [
             'url' => $url,
@@ -75,12 +91,52 @@ class ClienteWeb
             'textoVisible' => $this->recortar($textoVisible, 7000),
             'resumenCss' => $resumenCss,
             'hojasCss' => $urlsCss,
+            'diagnostico' => [
+                'htmlOk' => true,
+                'htmlRecortado' => $htmlRecortado,
+                'cssEnlazadas' => count($urlsCss),
+                'cssObtenidas' => count($contenidosCss),
+                'cssFallidas' => $cssFallidas,
+                'dinamico' => $dinamico['detectado'],
+                'dinamicoDetalle' => $dinamico['detalle'],
+            ],
         ];
     }
 
     /**
-     * Prefiere hojas CSS del mismo origen (más útiles y más rápidas).
-     *
+     * @return array{detectado: bool, detalle: string}
+     */
+    private function detectarContenidoDinamico(string $html, string $textoVisible): array
+    {
+        $scripts = preg_match_all('#<script\b#i', $html) ?: 0;
+        $frameworks = (bool) preg_match(
+            '/\b(react|vue|angular|next\.js|nuxt|svelte|__NEXT_DATA__|ng-version|data-reactroot)\b/i',
+            $html
+        );
+        $ratioTexto = strlen($html) > 0 ? (strlen($textoVisible) / strlen($html)) : 1.0;
+        $pocoTexto = $ratioTexto < 0.08 && strlen($html) > 20000;
+
+        $detectado = $frameworks || ($scripts >= 8 && $pocoTexto) || ($scripts >= 15);
+        $partes = [];
+        if ($frameworks) {
+            $partes[] = 'señales de framework SPA';
+        }
+        if ($scripts >= 8) {
+            $partes[] = $scripts . ' etiquetas script';
+        }
+        if ($pocoTexto) {
+            $partes[] = 'poco texto visible respecto al HTML';
+        }
+
+        return [
+            'detectado' => $detectado,
+            'detalle' => $detectado
+                ? ('Posible contenido dinámico: ' . implode('; ', $partes))
+                : 'No se detectaron indicios claros de SPA/render solo-cliente',
+        ];
+    }
+
+    /**
      * @param list<string> $urls
      * @return list<string>
      */
@@ -101,152 +157,174 @@ class ClienteWeb
     }
 
     /**
-     * Descarga varias URLs en paralelo (cURL multi) o en serie como respaldo.
-     *
      * @param list<string> $urls
      * @return array<string, string>
      */
     private function obtenerTextos(array $urls): array
     {
-        $urls = array_values(array_unique(array_filter($urls)));
-        if ($urls === []) {
-            return [];
-        }
-
-        if (count($urls) === 1 || !function_exists('curl_multi_init')) {
-            $resultado = [];
-            foreach ($urls as $url) {
-                try {
-                    $resultado[$url] = $this->obtenerTexto($url);
-                } catch (RuntimeException $excepcion) {
-                    // Ignorar fallos individuales.
-                }
-            }
-            return $resultado;
-        }
-
-        $multi = curl_multi_init();
-        if ($multi === false) {
-            return $this->obtenerTextos(array_slice($urls, 0, 1));
-        }
-
-        $manejadores = [];
-        foreach ($urls as $url) {
-            $host = strtolower((string) parse_url($url, PHP_URL_HOST));
-            $ipv4 = $this->resolverHost($host);
-            $manejador = curl_init($url);
-            if ($manejador === false) {
-                continue;
-            }
-            $opciones = [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_FOLLOWLOCATION => true,
-                CURLOPT_MAXREDIRS => 5,
-                CURLOPT_TIMEOUT => $this->tiempoEspera,
-                CURLOPT_CONNECTTIMEOUT => 10,
-                CURLOPT_HTTPHEADER => [
-                    'User-Agent: reVERSEand0/1.0 (web analyzer)',
-                    'Accept: text/css,*/*;q=0.8',
-                ],
-                CURLOPT_SSL_VERIFYPEER => true,
-                CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4,
-            ];
-            if ($ipv4 !== null) {
-                $opciones[CURLOPT_RESOLVE] = $this->resolutor->entradasCurlResolve($host, $ipv4);
-            }
-            curl_setopt_array($manejador, $opciones);
-            curl_multi_add_handle($multi, $manejador);
-            $manejadores[$url] = $manejador;
-        }
-
-        $activo = null;
-        do {
-            $estado = curl_multi_exec($multi, $activo);
-            if ($activo) {
-                curl_multi_select($multi, 1.0);
-            }
-        } while ($activo && $estado === CURLM_OK);
-
         $resultado = [];
-        foreach ($manejadores as $url => $manejador) {
-            $codigo = (int) curl_getinfo($manejador, CURLINFO_HTTP_CODE);
-            $cuerpo = curl_multi_getcontent($manejador);
-            curl_multi_remove_handle($multi, $manejador);
-            curl_close($manejador);
-            if (is_string($cuerpo) && $cuerpo !== '' && $codigo >= 200 && $codigo < 300) {
-                $resultado[$url] = $cuerpo;
+        foreach (array_values(array_unique(array_filter($urls))) as $url) {
+            try {
+                $urlSegura = $this->analizador->validarUrlHttpPublica($url);
+                $resultado[$url] = $this->obtenerTexto($urlSegura, 'css');
+            } catch (Throwable $excepcion) {
+                // Ignorar CSS individuales fallidos o no seguros.
             }
         }
-        curl_multi_close($multi);
-
         return $resultado;
     }
 
-    private function obtenerTexto(string $url): string
+    /**
+     * @param 'html'|'css' $tipo
+     */
+    private function obtenerTexto(string $url, string $tipo = 'html'): string
     {
-        $cabeceras = [
-            'User-Agent: reVERSEand0/1.0 (web analyzer)',
-            'Accept: text/html,application/xhtml+xml,text/css,*/*;q=0.8',
-        ];
+        if (!function_exists('curl_init')) {
+            throw new RuntimeException('cURL es obligatorio para el análisis web seguro.');
+        }
 
-        $host = strtolower((string) parse_url($url, PHP_URL_HOST));
-        $ipv4 = $this->resolverHost($host);
+        $urlActual = $this->analizador->validarUrlHttpPublica($url);
+        $redirecciones = 0;
 
-        if (function_exists('curl_init')) {
-            $manejador = curl_init($url);
+        while (true) {
+            $host = strtolower((string) parse_url($urlActual, PHP_URL_HOST));
+            $ipv4 = $this->resolverHostPublico($host);
+            if ($ipv4 === null) {
+                throw new RuntimeException('No se pudo resolver de forma segura el host: ' . $host);
+            }
+
+            $aceptar = $tipo === 'css'
+                ? 'text/css,*/*;q=0.1'
+                : 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.1';
+
+            $maxBytes = $tipo === 'css' ? $this->maxBytesCss : $this->maxBytesHtml;
+            $cuerpoAcumulado = '';
+            $abortadoPorTamano = false;
+            $location = null;
+
+            $manejador = curl_init($urlActual);
             if ($manejador === false) {
                 throw new RuntimeException('No se pudo iniciar la petición a la página web.');
             }
 
             $opciones = [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_FOLLOWLOCATION => true,
-                CURLOPT_MAXREDIRS => 5,
+                CURLOPT_RETURNTRANSFER => false,
+                CURLOPT_FOLLOWLOCATION => false,
                 CURLOPT_TIMEOUT => $this->tiempoEspera,
                 CURLOPT_CONNECTTIMEOUT => 10,
-                CURLOPT_HTTPHEADER => $cabeceras,
+                CURLOPT_HTTPHEADER => [
+                    'User-Agent: reVERSEand0/1.0 (web analyzer)',
+                    'Accept: ' . $aceptar,
+                ],
                 CURLOPT_SSL_VERIFYPEER => true,
+                CURLOPT_SSL_VERIFYHOST => 2,
                 CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4,
+                CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
+                CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
+                CURLOPT_RESOLVE => $this->resolutor->entradasCurlResolve($host, $ipv4),
+                CURLOPT_HEADERFUNCTION => static function ($ch, string $linea) use (&$location): int {
+                    if (preg_match('/^Location:\s*(.+)$/i', trim($linea), $m) === 1) {
+                        $location = trim($m[1]);
+                    }
+                    return strlen($linea);
+                },
+                CURLOPT_WRITEFUNCTION => static function ($ch, string $chunk) use (&$cuerpoAcumulado, &$abortadoPorTamano, $maxBytes): int {
+                    $cuerpoAcumulado .= $chunk;
+                    if (strlen($cuerpoAcumulado) > $maxBytes) {
+                        $abortadoPorTamano = true;
+                        $cuerpoAcumulado = substr($cuerpoAcumulado, 0, $maxBytes);
+                        return 0;
+                    }
+                    return strlen($chunk);
+                },
             ];
 
-            if ($ipv4 !== null) {
-                $opciones[CURLOPT_RESOLVE] = $this->resolutor->entradasCurlResolve($host, $ipv4);
-            }
-
             curl_setopt_array($manejador, $opciones);
-
-            $cuerpo = curl_exec($manejador);
-            $codigo = (int) curl_getinfo($manejador, CURLINFO_HTTP_CODE);
+            $ok = curl_exec($manejador);
+            $info = curl_getinfo($manejador);
+            $codigo = (int) ($info['http_code'] ?? 0);
             $error = curl_error($manejador);
+            $ipUsada = (string) ($info['primary_ip'] ?? '');
+            $tipoContenido = strtolower((string) ($info['content_type'] ?? ''));
             curl_close($manejador);
 
-            if ($cuerpo === false) {
+            if ($ipUsada !== '' && strcasecmp($ipUsada, $ipv4) !== 0) {
+                throw new RuntimeException('La IP de conexión no coincide con la IP validada (posible DNS rebinding).');
+            }
+            if ($ipUsada !== '' && $this->analizador->esIpPrivadaOReservada($ipUsada)) {
+                throw new RuntimeException('Conexión a IP privada o reservada bloqueada.');
+            }
+
+            if (!$abortadoPorTamano && $ok === false && $cuerpoAcumulado === '' && !in_array($codigo, [301, 302, 303, 307, 308], true)) {
                 throw new RuntimeException('Fallo de red al obtener la página: ' . $error);
+            }
+
+            if (in_array($codigo, [301, 302, 303, 307, 308], true)) {
+                if ($redirecciones >= $this->maxRedirecciones) {
+                    throw new RuntimeException('Demasiadas redirecciones al obtener la página.');
+                }
+                if ($location === null || $location === '') {
+                    throw new RuntimeException('Redirección sin destino Location válido.');
+                }
+                $urlActual = $this->analizador->validarUrlHttpPublica(
+                    $this->absolutizarUrl($urlActual, $location)
+                );
+                $redirecciones++;
+                continue;
             }
 
             if ($codigo < 200 || $codigo >= 300) {
                 throw new RuntimeException('La página respondió con error HTTP ' . $codigo . '.');
             }
 
-            return (string) $cuerpo;
+            if (!$this->esTipoContenidoPermitido($tipoContenido, $tipo)) {
+                throw new RuntimeException('Tipo de contenido no permitido: ' . ($tipoContenido !== '' ? $tipoContenido : 'desconocido'));
+            }
+
+            return $cuerpoAcumulado;
         }
+    }
 
-        $contexto = stream_context_create([
-            'http' => [
-                'method' => 'GET',
-                'header' => implode("\r\n", $cabeceras),
-                'timeout' => $this->tiempoEspera,
-                'follow_location' => 1,
-                'ignore_errors' => true,
-            ],
-        ]);
-
-        $cuerpo = @file_get_contents($url, false, $contexto);
-        if ($cuerpo === false) {
-            throw new RuntimeException('Fallo de red al obtener la página.');
+    private function absolutizarUrl(string $base, string $location): string
+    {
+        $location = trim($location);
+        if (preg_match('#^https?://#i', $location)) {
+            return $location;
         }
+        $partes = parse_url($base);
+        if ($partes === false || empty($partes['scheme']) || empty($partes['host'])) {
+            return $location;
+        }
+        $origen = $partes['scheme'] . '://' . $partes['host']
+            . (isset($partes['port']) ? ':' . $partes['port'] : '');
+        if (str_starts_with($location, '//')) {
+            return $partes['scheme'] . ':' . $location;
+        }
+        if (str_starts_with($location, '/')) {
+            return $origen . $location;
+        }
+        $ruta = $partes['path'] ?? '/';
+        $dir = preg_replace('#/[^/]*$#', '/', $ruta) ?? '/';
+        return $origen . $dir . $location;
+    }
 
-        return $cuerpo;
+    private function esTipoContenidoPermitido(string $contentType, string $tipo): bool
+    {
+        if ($contentType === '') {
+            // Algunos servidores omiten Content-Type; se tolera con recorte de tamaño.
+            return true;
+        }
+        $mime = strtolower(trim(explode(';', $contentType, 2)[0]));
+        if ($tipo === 'css') {
+            return $mime === 'text/css' || $mime === 'text/plain' || str_contains($mime, 'css');
+        }
+        return in_array($mime, [
+            'text/html',
+            'application/xhtml+xml',
+            'application/xml',
+            'text/xml',
+            'text/plain',
+        ], true) || str_contains($mime, 'html');
     }
 
     private function extraerTitulo(string $html): string
@@ -423,7 +501,7 @@ class ClienteWeb
         return mb_substr($texto, 0, $maximo) . "\n…[recortado]";
     }
 
-    private function resolverHost(string $host): ?string
+    private function resolverHostPublico(string $host): ?string
     {
         if ($host === '') {
             return null;
@@ -432,40 +510,25 @@ class ClienteWeb
             return $this->cacheDns[$host];
         }
         if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            if ($this->analizador->esIpPrivadaOReservada($host)) {
+                throw new RuntimeException('No se permiten destinos en redes privadas o reservadas.');
+            }
             $this->cacheDns[$host] = $host;
             return $host;
+        }
+        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            throw new RuntimeException('Solo se permiten destinos IPv4 públicos para el análisis web.');
         }
 
         $ipv4 = $this->resolutor->resolverIpv4($host);
         if ($ipv4 === null) {
             return null;
         }
-
-        // Anti-SSRF post-DoH (evita gethostbynamel bloqueante en validación).
-        if ($this->esIpPrivadaOReservada($ipv4)) {
+        if ($this->analizador->esIpPrivadaOReservada($ipv4)) {
             throw new RuntimeException('No se permiten destinos en redes privadas o reservadas.');
         }
 
         $this->cacheDns[$host] = $ipv4;
         return $ipv4;
-    }
-
-    private function esIpPrivadaOReservada(string $ip): bool
-    {
-        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            return !filter_var(
-                $ip,
-                FILTER_VALIDATE_IP,
-                FILTER_FLAG_IPV4 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE
-            );
-        }
-        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
-            return !filter_var(
-                $ip,
-                FILTER_VALIDATE_IP,
-                FILTER_FLAG_IPV6 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE
-            );
-        }
-        return true;
     }
 }

@@ -45,6 +45,13 @@
   const mensajeConfigGemini = document.getElementById('mensaje-config-gemini');
   const resultado = document.getElementById('resultado');
   const areaPrompt = document.getElementById('area-prompt');
+  const fichaCalidad = document.getElementById('ficha-calidad');
+  const listaCalidad = document.getElementById('lista-calidad');
+  const panelRegenerar = document.getElementById('panel-regenerar');
+  const listaSeccionesRegen = document.getElementById('lista-secciones-regen');
+  const botonRegenerarSeleccion = document.getElementById('boton-regenerar-seleccion');
+  const botonRegenTodas = document.getElementById('boton-regen-todas');
+  const botonRegenNinguna = document.getElementById('boton-regen-ninguna');
   const listaEjemplos = document.getElementById('lista-ejemplos');
   const etiquetaUrl = document.getElementById('etiqueta-url');
   const ayudaUrl = document.getElementById('ayuda-url');
@@ -52,13 +59,33 @@
   const textoHeroe = document.getElementById('texto-heroe');
   const nodoEjemplos = document.getElementById('datos-ejemplos');
 
+  const SECCIONES_DEFECTO = [
+    '1. Objetivo del proyecto',
+    '2. Funcionalidades',
+    '3. Arquitectura propuesta',
+    '4. Tecnologías',
+    '5. Estructura de directorios',
+    '6. Modelos de datos',
+    '7. Interfaces y experiencia de usuario',
+    '8. Seguridad',
+    '9. Requisitos técnicos',
+    '10. Plan de implementación',
+    '11. Criterios de aceptación',
+  ];
+
   /** @type {'repositorio'|'web'} */
   let modoEntrada = 'repositorio';
   /** @type {number[]} */
   let temporizadoresProgreso = [];
   let porcentajeActual = 0;
 
-  /** @type {Record<'repositorio'|'web'|'manual', Array<{enMs: number, pct: number, texto: string}>>} */
+  /** @type {{modoOrigen: string, contexto: Record<string, unknown>|null}} */
+  let estadoRegeneracion = {
+    modoOrigen: 'repositorio',
+    contexto: null,
+  };
+
+  /** @type {Record<'repositorio'|'web'|'manual'|'regenerar', Array<{enMs: number, pct: number, texto: string}>>} */
   const etapasProgreso = {
     repositorio: [
       { enMs: 0, pct: 8, texto: 'Validando URL…' },
@@ -81,6 +108,12 @@
       { enMs: 800, pct: 40, texto: 'Generando prompt…' },
       { enMs: 3500, pct: 75, texto: 'Refinando respuesta…' },
       { enMs: 7000, pct: 90, texto: 'Casi listo…' },
+    ],
+    regenerar: [
+      { enMs: 0, pct: 15, texto: 'Preparando secciones…' },
+      { enMs: 700, pct: 45, texto: 'Regenerando selección…' },
+      { enMs: 3000, pct: 75, texto: 'Fusionando prompt…' },
+      { enMs: 6500, pct: 90, texto: 'Casi listo…' },
     ],
   };
 
@@ -140,7 +173,7 @@
   }
 
   /**
-   * @param {'repositorio'|'web'|'manual'} tipo
+   * @param {'repositorio'|'web'|'manual'|'regenerar'} tipo
    */
   function iniciarProgreso(tipo) {
     detenerTemporizadoresProgreso();
@@ -151,6 +184,9 @@
     barraProgreso.classList.add('visible');
     botonObtener.disabled = true;
     botonGenerarManual.disabled = true;
+    if (botonRegenerarSeleccion) {
+      botonRegenerarSeleccion.disabled = true;
+    }
 
     etapas.forEach(function (etapa) {
       const id = window.setTimeout(function () {
@@ -171,6 +207,9 @@
     pintarProgreso(0, 'Preparando…');
     botonObtener.disabled = false;
     botonGenerarManual.disabled = false;
+    if (botonRegenerarSeleccion) {
+      botonRegenerarSeleccion.disabled = false;
+    }
   }
 
   function completarProgreso() {
@@ -185,8 +224,121 @@
   function limpiarResultadoPrompt() {
     areaPrompt.value = '';
     resultado.classList.remove('visible');
+    ocultarCalidadYRegeneracion();
+    estadoRegeneracion = { modoOrigen: modoEntrada, contexto: null };
     ocultarProgreso();
     ocultarError();
+  }
+
+  function ocultarCalidadYRegeneracion() {
+    if (fichaCalidad) {
+      fichaCalidad.hidden = true;
+    }
+    if (listaCalidad) {
+      listaCalidad.innerHTML = '';
+    }
+    if (panelRegenerar) {
+      panelRegenerar.hidden = true;
+    }
+    if (listaSeccionesRegen) {
+      listaSeccionesRegen.innerHTML = '';
+    }
+  }
+
+  /**
+   * @param {{items?: Array<{id?: string, etiqueta?: string, estado?: string, detalle?: string}>}|null|undefined} calidad
+   */
+  function renderizarCalidad(calidad) {
+    if (!fichaCalidad || !listaCalidad) {
+      return;
+    }
+    const items = calidad && Array.isArray(calidad.items) ? calidad.items : [];
+    if (items.length === 0) {
+      fichaCalidad.hidden = true;
+      listaCalidad.innerHTML = '';
+      return;
+    }
+
+    const etiquetasEstado = {
+      ok: 'OK',
+      parcial: 'Parcial',
+      no: 'No',
+      aviso: 'Aviso',
+    };
+
+    listaCalidad.innerHTML = '';
+    items.forEach(function (item) {
+      const estado = String(item.estado || 'aviso');
+      const li = document.createElement('li');
+      const badge = document.createElement('span');
+      badge.className = 'calidad-estado';
+      badge.setAttribute('data-estado', estado);
+      badge.textContent = etiquetasEstado[estado] || estado;
+
+      const etiqueta = document.createElement('span');
+      etiqueta.className = 'calidad-etiqueta';
+      etiqueta.textContent = String(item.etiqueta || item.id || 'Ítem');
+
+      const detalle = document.createElement('span');
+      detalle.className = 'calidad-detalle';
+      detalle.textContent = String(item.detalle || '');
+
+      li.appendChild(badge);
+      li.appendChild(etiqueta);
+      li.appendChild(detalle);
+      listaCalidad.appendChild(li);
+    });
+    fichaCalidad.hidden = false;
+  }
+
+  /**
+   * @param {string[]} secciones
+   */
+  function renderizarPanelRegenerar(secciones) {
+    if (!panelRegenerar || !listaSeccionesRegen) {
+      return;
+    }
+    const lista = Array.isArray(secciones) && secciones.length > 0 ? secciones : SECCIONES_DEFECTO;
+    listaSeccionesRegen.innerHTML = '';
+    lista.forEach(function (titulo, indice) {
+      const id = 'regen-sec-' + indice;
+      const label = document.createElement('label');
+      label.setAttribute('for', id);
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.id = id;
+      input.name = 'seccion-regen';
+      input.value = titulo;
+      const texto = document.createElement('span');
+      texto.textContent = titulo;
+      label.appendChild(input);
+      label.appendChild(texto);
+      listaSeccionesRegen.appendChild(label);
+    });
+    panelRegenerar.hidden = false;
+  }
+
+  function obtenerSeccionesSeleccionadas() {
+    if (!listaSeccionesRegen) {
+      return [];
+    }
+    return Array.from(listaSeccionesRegen.querySelectorAll('input[type="checkbox"]:checked')).map(
+      function (nodo) {
+        return String(nodo.value);
+      }
+    );
+  }
+
+  /**
+   * @param {boolean} marcar
+   */
+  function marcarSeccionesRegen(marcar) {
+    if (!listaSeccionesRegen) {
+      return;
+    }
+    listaSeccionesRegen.querySelectorAll('input[type="checkbox"]').forEach(function (nodo) {
+      nodo.checked = marcar;
+    });
   }
 
   function seleccionarModelo(modelo) {
@@ -253,9 +405,35 @@
     aplicarTema(obtenerTemaActual() === 'oscuro' ? 'claro' : 'oscuro');
   }
 
-  function mostrarPrompt(prompt, aviso) {
+  /**
+   * @param {string} prompt
+   * @param {string} [aviso]
+   * @param {{
+   *   calidadAnalisis?: {items?: Array<{id?: string, etiqueta?: string, estado?: string, detalle?: string}>},
+   *   secciones?: string[],
+   *   contextoRegeneracion?: Record<string, unknown>|null,
+   *   modoOrigen?: string,
+   *   conservarCalidad?: boolean
+   * }} [extra]
+   */
+  function mostrarPrompt(prompt, aviso, extra) {
     areaPrompt.value = prompt;
     resultado.classList.add('visible');
+
+    const opts = extra || {};
+    if (!opts.conservarCalidad) {
+      renderizarCalidad(opts.calidadAnalisis || null);
+      if (opts.contextoRegeneracion) {
+        estadoRegeneracion = {
+          modoOrigen: String(opts.modoOrigen || opts.contextoRegeneracion.modo || modoEntrada),
+          contexto: opts.contextoRegeneracion,
+        };
+        renderizarPanelRegenerar(opts.secciones || SECCIONES_DEFECTO);
+      } else if (opts.secciones) {
+        renderizarPanelRegenerar(opts.secciones);
+      }
+    }
+
     resultado.scrollIntoView({ behavior: 'smooth', block: 'start' });
     if (aviso) {
       mensajeError.textContent = String(aviso);
@@ -428,6 +606,7 @@
     ocultarError();
     resultado.classList.remove('visible');
     areaPrompt.value = '';
+    ocultarCalidadYRegeneracion();
     iniciarProgreso(modoEntrada);
 
     try {
@@ -437,7 +616,12 @@
       });
       await completarProgreso();
       ocultarProgreso();
-      mostrarPrompt(datos.prompt || '', datos.aviso || '');
+      mostrarPrompt(datos.prompt || '', datos.aviso || '', {
+        calidadAnalisis: datos.calidadAnalisis,
+        secciones: datos.secciones,
+        contextoRegeneracion: datos.contextoRegeneracion || null,
+        modoOrigen: datos.modo || modoEntrada,
+      });
     } catch (error) {
       ocultarProgreso();
       mostrarError(error instanceof Error ? error.message : 'Error desconocido.');
@@ -448,6 +632,7 @@
     ocultarError();
     resultado.classList.remove('visible');
     areaPrompt.value = '';
+    ocultarCalidadYRegeneracion();
     iniciarProgreso('manual');
 
     try {
@@ -458,11 +643,60 @@
       });
       await completarProgreso();
       ocultarProgreso();
-      mostrarPrompt(datos.prompt || '', datos.aviso || '');
+      mostrarPrompt(datos.prompt || '', datos.aviso || '', {
+        calidadAnalisis: datos.calidadAnalisis,
+        secciones: datos.secciones,
+        contextoRegeneracion: datos.contextoRegeneracion || null,
+        modoOrigen: 'manual',
+      });
     } catch (error) {
       ocultarProgreso();
       mostrarError(error instanceof Error ? error.message : 'Error desconocido.');
     }
+  }
+
+  async function regenerarSeleccion() {
+    const secciones = obtenerSeccionesSeleccionadas();
+    if (secciones.length === 0) {
+      mostrarError('Selecciona al menos una sección para regenerar.');
+      return;
+    }
+    const promptActual = areaPrompt.value.trim();
+    if (!promptActual) {
+      mostrarError('No hay un prompt generado para regenerar.');
+      return;
+    }
+    if (!estadoRegeneracion.contexto) {
+      muestraErrorContextoRegen();
+      return;
+    }
+
+    ocultarError();
+    iniciarProgreso('regenerar');
+
+    try {
+      const datos = await solicitarGeneracion({
+        modo: 'regenerar',
+        promptActual: promptActual,
+        secciones: secciones,
+        modoOrigen: estadoRegeneracion.modoOrigen,
+        contexto: estadoRegeneracion.contexto,
+      });
+      await completarProgreso();
+      ocultarProgreso();
+      mostrarPrompt(datos.prompt || promptActual, datos.aviso || '', {
+        conservarCalidad: true,
+      });
+    } catch (error) {
+      ocultarProgreso();
+      mostrarError(error instanceof Error ? error.message : 'Error desconocido.');
+    }
+  }
+
+  function muestraErrorContextoRegen() {
+    mostrarError(
+      'Falta el contexto del análisis. Genera de nuevo el prompt antes de regenerar secciones.'
+    );
   }
 
   async function copiarPrompt() {
@@ -577,6 +811,20 @@
   botonCancelarGemini.addEventListener('click', cerrarDialogoGemini);
   botonLogoDocs.addEventListener('click', abrirDialogoDocumentacion);
   botonCerrarDocs.addEventListener('click', cerrarDialogoDocumentacion);
+
+  if (botonRegenerarSeleccion) {
+    botonRegenerarSeleccion.addEventListener('click', regenerarSeleccion);
+  }
+  if (botonRegenTodas) {
+    botonRegenTodas.addEventListener('click', function () {
+      marcarSeccionesRegen(true);
+    });
+  }
+  if (botonRegenNinguna) {
+    botonRegenNinguna.addEventListener('click', function () {
+      marcarSeccionesRegen(false);
+    });
+  }
 
   dialogoDocumentacion.addEventListener('click', function (evento) {
     if (evento.target === dialogoDocumentacion) {

@@ -1,11 +1,12 @@
 <?php
 /**
- * Captura de pantalla de una URL con Chrome/Chromium headless local.
+ * Captura de pantalla de una URL con Chrome/Chromium headless aislado.
  */
 class CapturadorPantalla
 {
     private int $tiempoEsperaProceso = 45;
     private ResolutorDns $resolutor;
+    private AnalizadorUrl $analizador;
 
     /** @var list<string> */
     private array $candidatosBinario = [
@@ -21,9 +22,10 @@ class CapturadorPantalla
         '/snap/bin/chromium',
     ];
 
-    public function __construct(?ResolutorDns $resolutor = null)
+    public function __construct(?ResolutorDns $resolutor = null, ?AnalizadorUrl $analizador = null)
     {
         $this->resolutor = $resolutor ?? new ResolutorDns();
+        $this->analizador = $analizador ?? new AnalizadorUrl();
     }
 
     /**
@@ -31,6 +33,8 @@ class CapturadorPantalla
      */
     public function capturar(string $url): array
     {
+        $url = $this->analizador->validarUrlHttpPublica($url);
+
         $binario = $this->localizarBinario();
         if ($binario === null) {
             throw new RuntimeException(
@@ -45,24 +49,51 @@ class CapturadorPantalla
         }
 
         $archivo = $directorio . '/shot-' . bin2hex(random_bytes(8)) . '.png';
+        $perfil = $directorio . '/profile-' . bin2hex(random_bytes(6));
+        if (!mkdir($perfil, 0700, true) && !is_dir($perfil)) {
+            throw new RuntimeException('No se pudo crear el perfil temporal de Chromium.');
+        }
+
+        $host = strtolower((string) parse_url($url, PHP_URL_HOST));
+        $ipv4 = null;
+        if ($host !== '') {
+            if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                $ipv4 = $host;
+            } else {
+                $ipv4 = $this->resolutor->resolverIpv4($host);
+            }
+            if ($ipv4 === null || $this->analizador->esIpPrivadaOReservada($ipv4)) {
+                $this->limpiarDir($perfil);
+                throw new RuntimeException('Destino no seguro para captura (DNS/IP no pública).');
+            }
+        }
 
         $comando = [
             $binario,
             '--headless=new',
             '--disable-gpu',
-            '--no-sandbox',
+            '--no-sandbox', // necesario en muchos entornos locales sin user namespaces
             '--disable-dev-shm-usage',
+            '--disable-extensions',
+            '--disable-plugins',
+            '--disable-background-networking',
+            '--disable-sync',
+            '--disable-translate',
+            '--disable-default-apps',
+            '--no-first-run',
+            '--no-default-browser-check',
+            '--metrics-recording-only',
+            '--mute-audio',
             '--hide-scrollbars',
             '--window-size=1280,900',
             '--virtual-time-budget=3500',
+            '--user-data-dir=' . $perfil,
+            '--data-path=' . $perfil . '/data',
+            '--disk-cache-dir=' . $perfil . '/cache',
         ];
 
-        $host = strtolower((string) parse_url($url, PHP_URL_HOST));
-        if ($host !== '') {
-            $ipv4 = $this->resolutor->resolverIpv4($host);
-            if ($ipv4 !== null) {
-                $comando[] = '--host-resolver-rules=MAP ' . $host . ' ' . $ipv4;
-            }
+        if ($host !== '' && $ipv4 !== null) {
+            $comando[] = '--host-resolver-rules=MAP ' . $host . ' ' . $ipv4;
         }
 
         $comando[] = '--screenshot=' . $archivo;
@@ -79,6 +110,7 @@ class CapturadorPantalla
         ]);
 
         if (!is_resource($proceso)) {
+            $this->limpiarDir($perfil);
             throw new RuntimeException('No se pudo iniciar Chromium para la captura.');
         }
 
@@ -103,6 +135,7 @@ class CapturadorPantalla
                 fclose($tubos[2]);
                 proc_close($proceso);
                 @unlink($archivo);
+                $this->limpiarDir($perfil);
                 throw new RuntimeException('La captura de pantalla agotó el tiempo de espera.');
             }
             usleep(100000);
@@ -116,6 +149,7 @@ class CapturadorPantalla
 
         if (!is_file($archivo) || filesize($archivo) < 100) {
             @unlink($archivo);
+            $this->limpiarDir($perfil);
             $detalle = trim($stderr !== '' ? $stderr : $stdout);
             throw new RuntimeException(
                 'No se pudo generar la captura de pantalla.'
@@ -126,12 +160,12 @@ class CapturadorPantalla
 
         $bytes = file_get_contents($archivo);
         @unlink($archivo);
+        $this->limpiarDir($perfil);
 
         if ($bytes === false || $bytes === '') {
             throw new RuntimeException('La captura de pantalla está vacía.');
         }
 
-        // Limitar tamaño enviado a Gemini (~4 MB).
         if (strlen($bytes) > 4_000_000) {
             throw new RuntimeException('La captura es demasiado grande para enviarla a Gemini.');
         }
@@ -171,5 +205,24 @@ class CapturadorPantalla
             return $salida[0];
         }
         return null;
+    }
+
+    private function limpiarDir(string $directorio): void
+    {
+        if (!is_dir($directorio)) {
+            return;
+        }
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($directorio, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::CHILD_FIRST
+        );
+        foreach ($iterator as $item) {
+            if ($item->isDir()) {
+                @rmdir($item->getPathname());
+            } else {
+                @unlink($item->getPathname());
+            }
+        }
+        @rmdir($directorio);
     }
 }

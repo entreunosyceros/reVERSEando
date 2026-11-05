@@ -114,7 +114,7 @@ $ejemplosWeb = [
         <section>
           <h3>Cómo funciona</h3>
           <ol>
-            <li>Elige el modo <strong>Repositorio</strong> o <strong>Página web</strong> y pega una URL (o un ejemplo).</li>
+            <li>Elige el modo <strong>Repositorio</strong> o <strong>Página web</strong> y pega una URL (o un ejemplo). Tras generar verás la calidad del análisis y podrás regenerar secciones sueltas.</li>
             <li>
               En modo repositorio consulta la API de GitHub (metadatos, lenguajes, README, árbol y configs).
               En modo web descarga HTML/CSS y, si hay Gemini, captura la página con Chrome/Chromium local.
@@ -348,6 +348,31 @@ $ejemplosWeb = [
             Copiar prompt
           </button>
         </div>
+
+        <aside id="ficha-calidad" class="ficha-calidad" hidden>
+          <h3 class="ficha-calidad-titulo">Calidad del análisis</h3>
+          <ul id="lista-calidad" class="lista-calidad"></ul>
+        </aside>
+
+        <div id="panel-regenerar" class="panel-regenerar" hidden>
+          <h3 class="panel-regenerar-titulo">Regenerar secciones</h3>
+          <p class="panel-regenerar-ayuda">
+            Elige qué partes reescribir sin volver a analizar el origen.
+          </p>
+          <div id="lista-secciones-regen" class="lista-secciones-regen" role="group" aria-label="Secciones a regenerar"></div>
+          <div class="panel-regenerar-acciones">
+            <button type="button" class="boton boton-secundario" id="boton-regen-todas">
+              Todas
+            </button>
+            <button type="button" class="boton boton-secundario" id="boton-regen-ninguna">
+              Ninguna
+            </button>
+            <button type="button" class="boton" id="boton-regenerar-seleccion">
+              Regenerar selección
+            </button>
+          </div>
+        </div>
+
         <textarea
           id="area-prompt"
           class="campo campo-area area-prompt"

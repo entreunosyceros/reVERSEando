@@ -24,6 +24,8 @@ Si configuras una API key de **Gemini**, el prompt lo genera el modelo (en modo 
 - Modo **Repositorio**: metadatos públicos de GitHub (sin clonado ni OAuth)
 - Modo **Página web**: HTML/CSS (+ captura local con Chrome/Chromium si hay Gemini)
 - Generación con **Gemini** (opcional, multimodal en web) o **plantilla PHP** (fallback)
+- Prompts siempre estructurados en **11 secciones** (objetivo, funcionalidades, arquitectura, tecnologías, directorios, datos, UI/UX, seguridad, requisitos, plan, criterios de aceptación)
+- En modo web (y de forma general): distingue **hecho observado**, **inferencia** y **no verificable** para no inventar funcionalidades
 - Failover automático entre modelos Gemini si hay saturación (503/429)
 - Modo **manual**: título + descripción sin consultar GitHub ni la web
 - Configuración de API key y modelo desde la interfaz
@@ -82,6 +84,7 @@ Asegúrate de que el proceso de PHP pueda escribir en `config/`. El archivo `con
 1. Elige **Repositorio** o **Página web** (al cambiar de modo se limpia el prompt anterior).
 2. Pega una URL (o un ejemplo). En repositorio también vale `propietario/repositorio`.
 3. Pulsa **Obtener prompt**, espera la barra de progreso y copia el resultado.
+4. Revisa la ficha **Calidad del análisis** y, si quieres, regenera solo algunas de las 11 secciones sin reanalizar el origen.
 
 **Control manual:** título y descripción sin consultar GitHub ni la web.
 
@@ -133,6 +136,16 @@ reVERSEando/
 { "modo": "manual", "titulo": "Mi app", "descripcion": "..." }
 ```
 
+```json
+{
+  "modo": "regenerar",
+  "promptActual": "...",
+  "secciones": ["2. Funcionalidades", "8. Seguridad"],
+  "modoOrigen": "web",
+  "contexto": { "modo": "web", "analisisWeb": { } }
+}
+```
+
 Respuesta (campos relevantes):
 
 ```json
@@ -141,11 +154,16 @@ Respuesta (campos relevantes):
   "modo": "web",
   "fuente": "gemini",
   "prompt": "...",
+  "calidadAnalisis": { "items": [{ "id": "html", "etiqueta": "HTML obtenido", "estado": "ok", "detalle": "..." }] },
+  "contextoRegeneracion": { "modo": "web", "url": "...", "analisisWeb": { } },
+  "secciones": ["1. Objetivo del proyecto", "..."],
   "aviso": "Gemini estaba saturado; se usó la plantilla local."
 }
 ```
 
 - `fuente`: `"gemini"` o `"plantilla"`
+- `calidadAnalisis`: ficha OK / parcial / no / aviso del análisis
+- `contextoRegeneracion`: contexto ligero para `modo=regenerar` (sin captura)
 - `aviso`: opcional, si se hizo fallback a plantilla por saturación de Gemini
 
 ### `GET|POST /api/configuracion_gemini.php`
@@ -158,9 +176,16 @@ Respuesta (campos relevantes):
 
 - Pensado para **uso local**. No publiques la app en Internet sin proteger la API key.
 - No subas `config/gemini.json`.
-- Modo web rechaza localhost e IPs privadas (anti-SSRF básico); la resolución DNS usa DoH y comprueba IPs privadas antes del fetch.
-- Solo orígenes públicos; no elude login, captchas ni paywalls.
-- Respeta licencias y marcas de los sitios/repositorios analizados y las condiciones de GitHub y Google Gemini.
+- **Anti-SSRF (modo web):**
+  - Solo `http`/`https` y puertos **80/443**
+  - DNS-over-HTTPS + IP fijada en cURL (`CURLOPT_RESOLVE`); se verifica que la IP de conexión coincida (mitiga DNS rebinding)
+  - Redirecciones seguidas a mano revalidando cada destino (máx. 3)
+  - Bloqueo de IPs privadas/reservadas IPv4 e IPv6 (incl. link-local, ULA, multicast, IPv4-mapeadas)
+  - Límites de tiempo/tamaño y filtro de `Content-Type` (HTML/CSS)
+- **Chromium:** perfil temporal aislado, flags restrictivos y host fijado a IP pública validada
+- **Prompt injection:** el contenido externo (README/HTML/CSS/texto) se envía a Gemini delimitado como datos de análisis, no como instrucciones; el system prompt prohíbe obedecer órdenes embebidas o revelar secretos
+- Solo orígenes públicos; no elude login, captchas ni paywalls
+- Respeta licencias y marcas de los sitios/repositorios analizados y las condiciones de GitHub y Google Gemini
 
 ## Limitaciones
 

@@ -668,6 +668,129 @@ html[data-tema="claro"] .titulo-heroe {
   font-weight: 700;
 }
 
+.ficha-calidad {
+  margin: 0 0 calc(var(--espacio) * 2);
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--color-borde);
+  border-radius: var(--radio-estandar);
+  background: var(--color-superficie);
+}
+
+.ficha-calidad[hidden],
+.panel-regenerar[hidden] {
+  display: none;
+}
+
+.ficha-calidad-titulo,
+.panel-regenerar-titulo {
+  margin: 0 0 0.65rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.lista-calidad {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.lista-calidad li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 0.65rem;
+  align-items: baseline;
+  font-size: 0.88rem;
+  color: var(--color-texto-suave);
+}
+
+.calidad-estado {
+  display: inline-block;
+  min-width: 4.2rem;
+  padding: 0.12rem 0.4rem;
+  border-radius: var(--radio-micro);
+  border: 1px solid var(--color-borde);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--color-texto);
+}
+
+.calidad-estado[data-estado="ok"] {
+  border-color: #2f9e6b;
+  color: #2f9e6b;
+}
+
+.calidad-estado[data-estado="parcial"] {
+  border-color: #c4921a;
+  color: #c4921a;
+}
+
+.calidad-estado[data-estado="no"] {
+  border-color: #c45a5a;
+  color: #c45a5a;
+}
+
+.calidad-estado[data-estado="aviso"] {
+  border-color: var(--color-accion);
+  color: var(--color-accion);
+}
+
+.calidad-etiqueta {
+  color: var(--color-texto);
+  font-weight: 500;
+}
+
+.calidad-detalle {
+  grid-column: 2;
+  font-size: 0.82rem;
+}
+
+.panel-regenerar {
+  margin: 0 0 calc(var(--espacio) * 2);
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--color-borde);
+  border-radius: var(--radio-estandar);
+  background: var(--color-superficie-suave);
+}
+
+.panel-regenerar-ayuda {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  color: var(--color-texto-suave);
+}
+
+.lista-secciones-regen {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.35rem 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.lista-secciones-regen label {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  color: var(--color-texto);
+  cursor: pointer;
+}
+
+.lista-secciones-regen input {
+  margin-top: 0.2rem;
+  accent-color: var(--color-accion);
+}
+
+.panel-regenerar-acciones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
 .area-prompt {
   width: 100%;
   min-height: 320px;
