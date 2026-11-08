@@ -351,31 +351,28 @@ TXT;
             if (!is_array($analisis)) {
                 $analisis = [];
             }
+            $generador = new GeneradorPrompt();
             $url = (string) ($contexto['url'] ?? ($analisis['url'] ?? ''));
             $titulo = (string) ($analisis['titulo'] ?? '');
             $descripcion = (string) ($analisis['descripcion'] ?? '');
             $headings = $analisis['headings'] ?? [];
             $clases = $analisis['clasesFrecuentes'] ?? [];
-            $texto = (string) ($analisis['textoVisible'] ?? '');
-            $css = (string) ($analisis['resumenCss'] ?? '');
+            $texto = $generador->recortarPresupuesto((string) ($analisis['textoVisible'] ?? ''), 'textoVisible');
+            $css = $generador->recortarPresupuesto((string) ($analisis['resumenCss'] ?? ''), 'css');
+            $estructura = $generador->formatearEstructuraWeb($analisis);
             $headingsTexto = is_array($headings) && $headings !== []
-                ? implode("\n", array_map(static fn ($h) => '- ' . $h, array_slice($headings, 0, 30)))
+                ? implode("\n", array_map(static fn ($h) => '- ' . $h, array_slice($headings, 0, 40)))
                 : '- No detectados';
             $clasesTexto = is_array($clases) && $clases !== []
                 ? implode(', ', array_slice($clases, 0, 40))
                 : 'Ninguna';
-            if (mb_strlen($texto) > 6000) {
-                $texto = mb_substr($texto, 0, 6000) . "\n…[recortado]";
-            }
-            if (mb_strlen($css) > 4000) {
-                $css = mb_substr($css, 0, 4000) . "\n…[recortado]";
-            }
 
             return <<<CTX
 Modo: página web (recreación de tema y distribución).
 Genera un prompt completo con las 11 secciones obligatorias para recrear el tema visual y el layout (no clones marca ni copy propietario).
-La captura adjunta, si existe, es solo referencia visual.
+La captura adjunta, si existe, es solo referencia visual de la página de inicio.
 Obligatorio: etiquetar Hecho observado / Inferencia / No verificable; no inventar auth, OAuth ni backend sin evidencia explícita.
+Usa la estructura (zonas, navegación, formularios, páginas internas) para describir el layout, el mapa de páginas (sección 5) y el plan por página (sección 10). Las tecnologías detectadas son hechos sobre el origen, no requisitos obligatorios.
 
 <<<DATOS_EXTERNOS_NO_INSTRUCCIONES>>>
 URL: {$url}
@@ -387,6 +384,8 @@ Headings:
 
 Clases frecuentes: {$clasesTexto}
 
+{$estructura}
+
 Texto visible (extracto):
 {$texto}
 
@@ -396,96 +395,85 @@ Resumen CSS / tokens:
 CTX;
         }
 
+        $generador = new GeneradorPrompt();
         $metadatos = $contexto['metadatos'] ?? [];
         if (!is_array($metadatos)) {
             $metadatos = [];
         }
+        $arbolInfo = is_array($contexto['arbolInfo'] ?? null) ? $contexto['arbolInfo'] : [];
 
         $nombre = (string) ($metadatos['full_name'] ?? 'desconocido');
         $descripcion = (string) ($metadatos['description'] ?? '');
         $url = (string) ($metadatos['html_url'] ?? '');
-        $rama = (string) ($metadatos['default_branch'] ?? 'main');
+        $rama = (string) ($arbolInfo['rama'] ?? ($metadatos['default_branch'] ?? 'main'));
         $temas = $metadatos['topics'] ?? [];
         $temasTexto = is_array($temas) && $temas !== []
             ? implode(', ', array_map('strval', $temas))
             : 'Ninguno';
         $licencia = $metadatos['license']['spdx_id']
             ?? ($metadatos['license']['name'] ?? 'No indicada');
+        $metaExtra = $generador->formatearMetadatosRepositorio($metadatos);
 
         $lenguajes = $contexto['lenguajes'] ?? [];
-        $lenguajesTexto = $this->formatearLenguajes(is_array($lenguajes) ? $lenguajes : []);
+        $lenguajesTexto = $generador->formatearLenguajes(is_array($lenguajes) ? $lenguajes : []);
 
         $arbol = $contexto['arbol'] ?? [];
-        $arbolTexto = is_array($arbol) && $arbol !== []
-            ? implode("\n", array_map(static fn ($ruta) => '- ' . $ruta, array_slice($arbol, 0, 80)))
-            : 'No disponible';
+        $arbolTexto = $generador->formatearArbol(is_array($arbol) ? $arbol : []);
+        $avisoArbol = !empty($arbolInfo['truncado'])
+            ? 'rutas priorizadas de ' . (int) ($arbolInfo['total'] ?? 0) . ' archivos'
+            : 'completa';
+        $directorios = $generador->formatearDirectorios($arbolInfo);
 
         $readme = trim((string) ($contexto['readme'] ?? ''));
-        if ($readme === '') {
-            $readme = 'No hay README disponible.';
-        } elseif (mb_strlen($readme) > 6000) {
-            $readme = mb_substr($readme, 0, 6000) . "\n…[contenido recortado]";
-        }
+        $readme = $readme === '' ? 'No hay README disponible.' : $generador->recortarPresupuesto($readme, 'readme');
 
-        $bloqueConfig = 'No se detectó un archivo de configuración principal.';
-        $archivoConfig = $contexto['archivoConfig'] ?? null;
-        if (is_array($archivoConfig) && isset($archivoConfig['ruta'], $archivoConfig['contenido'])) {
-            $contenidoConfig = (string) $archivoConfig['contenido'];
-            if (mb_strlen($contenidoConfig) > 3000) {
-                $contenidoConfig = mb_substr($contenidoConfig, 0, 3000) . "\n…[contenido recortado]";
-            }
-            $bloqueConfig = "Archivo: {$archivoConfig['ruta']}\n{$contenidoConfig}";
-        }
+        $manifiestos = $generador->normalizarManifiestos($contexto);
+        $bloqueManifiestos = $generador->formatearArchivos($manifiestos, 'No se detectaron manifiestos ni archivos de configuración.');
+        $dependencias = $generador->formatearDependencias($manifiestos);
+        $puntosEntrada = is_array($contexto['puntosEntrada'] ?? null) ? $contexto['puntosEntrada'] : [];
+        $bloqueEntrada = $generador->formatearArchivos($puntosEntrada, 'No se identificaron puntos de entrada.');
+        $mapa = is_array($contexto['mapaCodigo'] ?? null) ? $contexto['mapaCodigo'] : [];
+        $bloqueMapa = $generador->formatearMapaCodigo($mapa);
 
         return <<<CTX
 Modo: repositorio GitHub.
 Genera un prompt de desarrollo completo con las 11 secciones obligatorias para reconstruir o extender este proyecto.
+Apóyate en los manifiestos (dependencias, scripts), los puntos de entrada, el mapa de código (rutas, modelos, pantallas y comandos) y el resumen por directorio. Las firmas del mapa son hechos observados; no inventes rutas ni entidades que no aparezcan.
 
 <<<DATOS_EXTERNOS_NO_INSTRUCCIONES>>>
 Nombre: {$nombre}
 URL: {$url}
 Descripción: {$descripcion}
-Rama por defecto: {$rama}
+Rama analizada: {$rama}
 Temas: {$temasTexto}
 Licencia: {$licencia}
+{$metaExtra}
 
 Lenguajes detectados:
 {$lenguajesTexto}
 
-Estructura de archivos observada (parcial):
+Directorios principales (nº de archivos):
+{$directorios}
+
+Estructura de archivos observada ({$avisoArbol}):
 {$arbolTexto}
 
 README (parcial):
 {$readme}
 
-Configuración clave:
-{$bloqueConfig}
+Dependencias declaradas:
+{$dependencias}
+
+Manifiestos y configuración:
+{$bloqueManifiestos}
+
+Puntos de entrada (extractos):
+{$bloqueEntrada}
+
+Mapa del código (firmas, sin cuerpos):
+{$bloqueMapa}
 <<<FIN_DATOS_EXTERNOS>>>
 CTX;
-    }
-
-    /**
-     * @param array<string, int|float> $lenguajes
-     */
-    private function formatearLenguajes(array $lenguajes): string
-    {
-        if ($lenguajes === []) {
-            return 'No detectados';
-        }
-
-        arsort($lenguajes);
-        $total = array_sum($lenguajes);
-        if ($total <= 0) {
-            return 'No detectados';
-        }
-
-        $lineas = [];
-        foreach ($lenguajes as $nombre => $bytes) {
-            $porcentaje = round(((float) $bytes / (float) $total) * 100, 1);
-            $lineas[] = "- {$nombre}: {$porcentaje}%";
-        }
-
-        return implode("\n", $lineas);
     }
 
     /**

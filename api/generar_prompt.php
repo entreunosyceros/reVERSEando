@@ -67,6 +67,13 @@ function construirCalidadWeb(array $analisis, string $estadoCaptura, string $det
     $cssFallidas = is_array($diag['cssFallidas'] ?? null) ? $diag['cssFallidas'] : [];
     $dinamico = (bool) ($diag['dinamico'] ?? false);
     $dinamicoDetalle = (string) ($diag['dinamicoDetalle'] ?? '');
+    $estructura = is_array($analisis['estructura'] ?? null) ? $analisis['estructura'] : [];
+    $zonas = is_array($estructura['zonas'] ?? null) ? count($estructura['zonas']) : 0;
+    $enlacesNav = is_array($estructura['navegacion'] ?? null) ? count($estructura['navegacion']) : 0;
+    $formularios = is_array($estructura['formularios'] ?? null) ? count($estructura['formularios']) : 0;
+    $paginasIntentadas = (int) ($diag['paginasIntentadas'] ?? 0);
+    $paginasObtenidas = (int) ($diag['paginasObtenidas'] ?? 0);
+    $paginasFallidas = is_array($diag['paginasFallidas'] ?? null) ? count($diag['paginasFallidas']) : 0;
 
     if ($cssEnlazadas === 0) {
         $cssEstado = 'aviso';
@@ -80,6 +87,12 @@ function construirCalidadWeb(array $analisis, string $estadoCaptura, string $det
     } else {
         $cssEstado = 'ok';
         $cssDetalle = $cssObtenidas . ' hoja(s) CSS analizadas.';
+    }
+    if (!empty($diag['cssEnLinea'])) {
+        if ($cssEstado === 'aviso' || $cssEstado === 'no') {
+            $cssEstado = 'parcial';
+        }
+        $cssDetalle .= ' Incluye CSS en línea (<style>).';
     }
 
     $capturaMap = [
@@ -127,6 +140,25 @@ function construirCalidadWeb(array $analisis, string $estadoCaptura, string $det
                 : count($cssFallidas) . ' hoja(s) CSS inaccesible(s).',
         ],
         [
+            'id' => 'estructura',
+            'etiqueta' => 'Estructura de la página',
+            'estado' => $zonas > 0 ? 'ok' : ($enlacesNav > 0 ? 'parcial' : 'aviso'),
+            'detalle' => $zonas > 0 || $enlacesNav > 0
+                ? $zonas . ' zona(s), ' . $enlacesNav . ' enlace(s) de navegación, ' . $formularios . ' formulario(s).'
+                : 'Sin etiquetas semánticas (header/nav/main/footer) detectables.',
+        ],
+        [
+            'id' => 'paginas',
+            'etiqueta' => 'Páginas internas',
+            'estado' => $paginasObtenidas > 0
+                ? ($paginasFallidas === 0 ? 'ok' : 'parcial')
+                : ($paginasIntentadas > 0 ? 'no' : 'aviso'),
+            'detalle' => ($paginasIntentadas > 0
+                    ? $paginasObtenidas . ' de ' . $paginasIntentadas . ' página(s) interna(s) analizadas'
+                    : 'No se encontraron páginas internas que analizar')
+                . (!empty($diag['sitemapEncontrado']) ? '; sitemap encontrado.' : '; sin sitemap.'),
+        ],
+        [
             'id' => 'inferencias',
             'etiqueta' => 'Información inferida',
             'estado' => 'aviso',
@@ -142,7 +174,10 @@ function construirCalidadWeb(array $analisis, string $estadoCaptura, string $det
  * @param array<string, int> $lenguajes
  * @param string $readme
  * @param list<string> $arbol
- * @param array{ruta: string, contenido: string}|null $archivoConfig
+ * @param array{total?: int, truncado?: bool, rama?: string} $arbolInfo
+ * @param list<array{ruta: string, contenido: string}> $manifiestos
+ * @param list<array{ruta: string, contenido: string}> $puntosEntrada
+ * @param array{rutas?: list<string>, modelos?: list<string>, pantallas?: list<string>, comandos?: list<string>, archivos?: int} $mapaCodigo
  * @return array{items: list<array{id: string, etiqueta: string, estado: string, detalle: string}>}
  */
 function construirCalidadRepositorio(
@@ -150,12 +185,18 @@ function construirCalidadRepositorio(
     array $lenguajes,
     string $readme,
     array $arbol,
-    ?array $archivoConfig
+    array $arbolInfo,
+    array $manifiestos,
+    array $puntosEntrada,
+    array $mapaCodigo = []
 ): array {
     $tieneReadme = trim($readme) !== '';
     $tieneLenguajes = $lenguajes !== [];
     $tieneArbol = $arbol !== [];
-    $tieneConfig = $archivoConfig !== null && trim((string) ($archivoConfig['contenido'] ?? '')) !== '';
+    $totalArbol = (int) ($arbolInfo['total'] ?? count($arbol));
+    $truncado = !empty($arbolInfo['truncado']);
+    $rutasManifiestos = array_map(static fn (array $m): string => (string) $m['ruta'], $manifiestos);
+    $rutasEntrada = array_map(static fn (array $p): string => (string) $p['ruta'], $puntosEntrada);
 
     $items = [
         [
@@ -183,18 +224,41 @@ function construirCalidadRepositorio(
         [
             'id' => 'arbol',
             'etiqueta' => 'Árbol de archivos',
-            'estado' => $tieneArbol ? 'ok' : 'no',
+            'estado' => $tieneArbol ? ($truncado ? 'parcial' : 'ok') : 'no',
             'detalle' => $tieneArbol
-                ? count($arbol) . ' rutas en el árbol.'
+                ? ($truncado
+                    ? count($arbol) . ' rutas priorizadas de ' . $totalArbol . ' (árbol recortado; se incluye resumen por directorio).'
+                    : $totalArbol . ' rutas en el árbol.')
+                    . (isset($arbolInfo['rama']) ? ' Rama: ' . $arbolInfo['rama'] . '.' : '')
                 : 'No se obtuvo el árbol de archivos.',
         ],
         [
             'id' => 'config',
-            'etiqueta' => 'Archivo de configuración',
-            'estado' => $tieneConfig ? 'ok' : 'aviso',
-            'detalle' => $tieneConfig
-                ? 'Usando ' . (string) ($archivoConfig['ruta'] ?? 'config') . '.'
-                : 'Sin package.json / composer.json / equivalente detectado.',
+            'etiqueta' => 'Manifiestos y configuración',
+            'estado' => $rutasManifiestos !== [] ? 'ok' : 'aviso',
+            'detalle' => $rutasManifiestos !== []
+                ? 'Leídos: ' . implode(', ', $rutasManifiestos) . '.'
+                : 'Sin package.json / composer.json / Dockerfile / equivalente detectado.',
+        ],
+        [
+            'id' => 'entrada',
+            'etiqueta' => 'Puntos de entrada',
+            'estado' => $rutasEntrada !== [] ? 'ok' : 'aviso',
+            'detalle' => $rutasEntrada !== []
+                ? 'Leídos: ' . implode(', ', $rutasEntrada) . '.'
+                : 'No se identificaron archivos main/index/app/routes.',
+        ],
+        [
+            'id' => 'codigo',
+            'etiqueta' => 'Mapa del código',
+            'estado' => (int) ($mapaCodigo['archivos'] ?? 0) > 0 ? 'ok' : 'aviso',
+            'detalle' => (int) ($mapaCodigo['archivos'] ?? 0) > 0
+                ? (int) ($mapaCodigo['archivos'] ?? 0) . ' archivo(s) con señales: '
+                    . count(is_array($mapaCodigo['rutas'] ?? null) ? $mapaCodigo['rutas'] : []) . ' rutas, '
+                    . count(is_array($mapaCodigo['modelos'] ?? null) ? $mapaCodigo['modelos'] : []) . ' modelos, '
+                    . count(is_array($mapaCodigo['pantallas'] ?? null) ? $mapaCodigo['pantallas'] : []) . ' pantallas, '
+                    . count(is_array($mapaCodigo['comandos'] ?? null) ? $mapaCodigo['comandos'] : []) . ' comandos.'
+                : 'No se extrajeron rutas, modelos ni pantallas del código.',
         ],
         [
             'id' => 'inferencias',
@@ -322,30 +386,9 @@ function resolverPrompt(array $contexto, GeneradorPrompt $generador, ?array $con
     if ($config === null) {
         $config = (new GestorConfiguracionGemini())->obtener();
     }
-    $modo = (string) ($contexto['modo'] ?? 'repositorio');
-
     if ($config['api_key'] === '') {
-        if ($modo === 'manual') {
-            $prompt = $generador->construirPromptManual(
-                (string) ($contexto['titulo'] ?? ''),
-                (string) ($contexto['descripcion'] ?? '')
-            );
-        } elseif ($modo === 'web') {
-            $prompt = $generador->construirPromptDesdeWeb(
-                is_array($contexto['analisisWeb'] ?? null) ? $contexto['analisisWeb'] : []
-            );
-        } else {
-            $prompt = $generador->construirPromptDesdeRepositorio([
-                'metadatos' => $contexto['metadatos'] ?? [],
-                'lenguajes' => $contexto['lenguajes'] ?? [],
-                'readme' => (string) ($contexto['readme'] ?? ''),
-                'arbol' => $contexto['arbol'] ?? [],
-                'archivoConfig' => $contexto['archivoConfig'] ?? null,
-            ]);
-        }
-
         return [
-            'prompt' => $prompt,
+            'prompt' => $generador->construirPromptDesdeContexto($contexto),
             'fuente' => 'plantilla',
         ];
     }
@@ -375,27 +418,8 @@ function resolverPrompt(array $contexto, GeneradorPrompt $generador, ?array $con
         }
 
         // Si Gemini está saturado tras todos los failover, devolver plantilla local.
-        if ($modo === 'manual') {
-            $prompt = $generador->construirPromptManual(
-                (string) ($contexto['titulo'] ?? ''),
-                (string) ($contexto['descripcion'] ?? '')
-            );
-        } elseif ($modo === 'web') {
-            $prompt = $generador->construirPromptDesdeWeb(
-                is_array($contexto['analisisWeb'] ?? null) ? $contexto['analisisWeb'] : []
-            );
-        } else {
-            $prompt = $generador->construirPromptDesdeRepositorio([
-                'metadatos' => $contexto['metadatos'] ?? [],
-                'lenguajes' => $contexto['lenguajes'] ?? [],
-                'readme' => (string) ($contexto['readme'] ?? ''),
-                'arbol' => $contexto['arbol'] ?? [],
-                'archivoConfig' => $contexto['archivoConfig'] ?? null,
-            ]);
-        }
-
         return [
-            'prompt' => $prompt,
+            'prompt' => $generador->construirPromptDesdeContexto($contexto),
             'fuente' => 'plantilla',
             'aviso' => 'Gemini estaba saturado; se usó la plantilla local.',
         ];
@@ -567,21 +591,13 @@ try {
     $lenguajes = $paquete['lenguajes'];
     $readme = $paquete['readme'];
     $arbol = $paquete['arbol'];
+    $arbolInfo = $paquete['arbolInfo'];
 
-    $archivoConfig = $cliente->obtenerPrimerArchivoExistente(
+    $archivosClave = $cliente->obtenerArchivosClave(
         $partes['propietario'],
         $partes['repositorio'],
-        [
-            'package.json',
-            'composer.json',
-            'pyproject.toml',
-            'Cargo.toml',
-            'go.mod',
-            'pom.xml',
-            'requirements.txt',
-        ],
-        $rama,
-        $arbol
+        $arbolInfo['rama'],
+        $paquete['rutasTodas']
     );
 
     $contextoRepo = [
@@ -590,7 +606,11 @@ try {
         'lenguajes' => $lenguajes,
         'readme' => $readme,
         'arbol' => $arbol,
-        'archivoConfig' => $archivoConfig,
+        'arbolInfo' => $arbolInfo,
+        'manifiestos' => $archivosClave['manifiestos'],
+        'puntosEntrada' => $archivosClave['puntosEntrada'],
+        'mapaCodigo' => $archivosClave['mapaCodigo'],
+        'archivoConfig' => $archivosClave['manifiestos'][0] ?? null,
     ];
     $resultado = resolverPrompt($contextoRepo, $generador, $configGemini);
 
@@ -606,7 +626,10 @@ try {
             $lenguajes,
             $readme,
             $arbol,
-            $archivoConfig
+            $arbolInfo,
+            $archivosClave['manifiestos'],
+            $archivosClave['puntosEntrada'],
+            $archivosClave['mapaCodigo']
         ),
         'contextoRegeneracion' => $contextoRepo,
         'secciones' => GeneradorPrompt::SECCIONES,

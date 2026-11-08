@@ -86,6 +86,11 @@ Asegúrate de que el proceso de PHP pueda escribir en `config/`. El archivo `con
 3. Pulsa **Obtener prompt**, espera la barra de progreso y copia el resultado.
 4. Revisa la ficha **Calidad del análisis** y, si quieres, regenera solo algunas de las 11 secciones sin reanalizar el origen.
 
+**Qué se analiza:**
+
+- **Repositorio:** metadatos (web, estrellas, issues, fork/archivado, fechas), lenguajes, README, árbol de archivos priorizado (raíz, código y manifiestos antes que docs/tests) con resumen por directorio, hasta 6 manifiestos (`package.json`, `composer.json`, `Dockerfile`, `docker-compose.yml`, `.env.example`, `tsconfig.json`…) con sus dependencias y scripts, hasta 3 puntos de entrada (`main`, `index`, `app`, `routes`…) y un mapa de firmas de hasta 12 archivos de código (rutas HTTP, modelos y campos, pantallas y comandos, sin volcar los cuerpos). Los archivos se leen desde `raw.githubusercontent.com`, que no consume el límite de la API.
+- **Web:** HTML, CSS enlazado, `<style>` en línea y `@import`; estructura de la página (zonas `header`/`nav`/`main`/`section`/`footer`, menú, formularios, CTA, imágenes, idioma, Open Graph, JSON-LD) y tecnologías detectadas; además, hasta 4 páginas internas del mismo dominio tomadas del menú y del `sitemap.xml`.
+
 **Control manual:** título y descripción sin consultar GitHub ni la web.
 
 El logo de la cabecera abre la documentación; al final del modal hay un enlace al repositorio en GitHub.
@@ -184,12 +189,15 @@ Respuesta (campos relevantes):
   - Límites de tiempo/tamaño y filtro de `Content-Type` (HTML/CSS)
 - **Chromium:** perfil temporal aislado, flags restrictivos y host fijado a IP pública validada
 - **Prompt injection:** el contenido externo (README/HTML/CSS/texto) se envía a Gemini delimitado como datos de análisis, no como instrucciones; el system prompt prohíbe obedecer órdenes embebidas o revelar secretos
+- **Archivos `.env*`:** de los repositorios solo se conservan los nombres de las variables; los valores se eliminan antes de usarlos. En las firmas del código se descartan literales con forma de token o clave
 - Solo orígenes públicos; no elude login, captchas ni paywalls
 - Respeta licencias y marcas de los sitios/repositorios analizados y las condiciones de GitHub y Google Gemini
 
 ## Limitaciones
 
 - No analiza todo el código fuente ni SPAs que solo renderizan en el cliente.
+- En repositorios grandes el árbol se resume (150 rutas priorizadas + recuento por directorio).
+- Las páginas internas se descargan en secuencia con un presupuesto de unos 6 s; las que no lleguen a tiempo se indican en la ficha de calidad. Solo se captura la página de inicio.
 - GitHub y Gemini tienen límites de tasa; Gemini puede devolver 503 (la app reintenta otros modelos o cae a plantilla).
 - Sin Chromium, el modo web con Gemini no puede capturar la página (sigue el análisis HTML/CSS).
 - Sitios con captcha o bloqueo a headless pueden fallar o dar resultados incompletos.
